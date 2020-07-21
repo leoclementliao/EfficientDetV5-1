@@ -200,7 +200,7 @@ class ModelEMA:
     I've tested with the sequence in my own train.py for torch.DataParallel, apex.DDP, and single-GPU.
     """
 
-    def __init__(self, model, decay=0.9999, device=''):
+    def __init__(self, model, decay=0.9998, device=''):
         # Create EMA
         self.is_parallel = is_parallel(model)
         self.ema = deepcopy(model.module if self.is_parallel else model)  # FP32 EMA
