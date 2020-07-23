@@ -13,4 +13,5 @@ to add:
 1) anchor ration to change to yolo style
 2) add MAP calculation for validation set
 3) loss change to yolo style
+4) GIOU loss
 
