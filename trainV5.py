@@ -1,3 +1,7 @@
+import os
+os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID" 
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
 import argparse
 import random
 import torch.distributed as dist
@@ -100,20 +104,37 @@ def train(hyp):
     if(load_from_pretrained):
         model = EfficientDet(config, pretrained_backbone=False)
     # 加载预训练模型
-        checkpoint = torch.load(r'./tf_efficientdet_d4-5b370b7a.pth')
-        model.load_state_dict(checkpoint)
+        checkpoint = torch.load(r'./tf_efficientdet_d4-5b370b7a.pth',map_location = device)
+        try:
+            exclude = ['running_mean','running_var']#['anchor', ,,'bn','tracked',]
+            checkpoint = {k: v for k, v in checkpoint.items()
+                             if k in model.state_dict() and not any(x in k for x in exclude)
+                             and model.state_dict()[k].shape == v.shape}
+            model.load_state_dict(checkpoint, strict=False)
+            print('Transferred %g/%g items from ' % (len(checkpoint), len(model.state_dict())))
+        except KeyError as e:
+            s = " is not compatible with . This may be due to model differences or %s may be out of date. " \
+                "Please delete or update  and try again, or use --weights '' to train from scratch." 
+                
+            raise KeyError(s) from e
+        #model.load_state_dict(checkpoint)
         config.num_classes = 1
         config.image_size = opt.img_size[0]
     else: # load from best,last
         config.num_classes = 1
         config.image_size = opt.img_size[0]
         model = EfficientDet(config, pretrained_backbone=False)    
-        checkpoint = torch.load(r'./weights/best_DEBUG.pt')#
+        checkpoint = torch.load(r'./weights/last.pt',map_location=device)#
         model.load_state_dict(checkpoint['model'].model.state_dict())
+        print("load from last.pt\n")
+        
     # norm_kwargs 设置的是 BATCHNORM2D 的参数
     model.class_net = HeadNet(config, num_outputs=config.num_classes, norm_kwargs=dict(eps=.001, momentum=.01))
     model = DetBenchTrain(model, config)
     print("effDet config:",config)
+    #for k,v in model.float().state_dict().items():
+    	
+     #   print(k,' ')
     # Image sizes
     #gs = int(max(model.stride))  # grid size (max stride)
     imgsz, imgsz_test = [x for x in opt.img_size]  # verify imgsz are gs-multiples
@@ -149,6 +170,18 @@ def train(hyp):
     # Load Model
 
     start_epoch, best_fitness = 0, 1000.0
+    if load_from_pretrained == False:
+        if checkpoint['optimizer_state_dict'] is not None:
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            best_fitness = checkpoint['best_summary_loss']
+            print("load best loss:", best_fitness)
+        if checkpoint['epoch'] is not None:
+    	    start_epoch = checkpoint['epoch'] + 1
+    	    if epochs < start_epoch:
+                print('%s has been trained for %g epochs. Fine-tuning for %g additional epochs.' %
+                  (opt.weights, checkpoint['epoch'], epochs))
+                epochs += checkpoint['epoch']  # finetune additional epochs
+    del checkpoint
     '''
     if weights.endswith('.pt'):  # pytorch format
         ckpt = torch.load(weights, map_location=device)  # load checkpoint
@@ -218,7 +251,7 @@ def train(hyp):
                                                 sampler=RandomSampler(train_dataset),
                                                 pin_memory=True,#opt.cache_images,
                                                 drop_last=True,
-                                                num_workers=6,
+                                                num_workers=3,
                                                 collate_fn=collate_fn,
                                             )
     #create_dataloader(train_path, imgsz, batch_size, gs, opt,
@@ -230,7 +263,7 @@ def train(hyp):
     testloader = torch.utils.data.DataLoader(
                                                 validation_dataset,
                                                 batch_size=batch_size,
-                                                num_workers=6,
+                                                num_workers=3,
                                                 shuffle=False,
                                                 sampler=SequentialSampler(validation_dataset),
                                                 pin_memory=True,#opt.cache_images,
