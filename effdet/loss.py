@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 
 
 def focal_loss(logits, targets, alpha, gamma, normalizer):
@@ -62,6 +63,61 @@ def focal_loss(logits, targets, alpha, gamma, normalizer):
     weighted_loss = torch.where(positive_label_mask, alpha * loss, (1.0 - alpha) * loss)
     weighted_loss /= normalizer
     return weighted_loss
+
+
+def bbox_iou(box1, box2, x1y1x2y2=True, GIoU=False, DIoU=False, CIoU=False):
+    # Returns the IoU of box1 to box2. box1 is 4, box2 is nx4
+    box2 = box2.t().half()
+
+    # Get the coordinates of bounding boxes
+    if x1y1x2y2:  # x1, y1, x2, y2 = box1
+        b1_x1, b1_y1, b1_x2, b1_y2 = box1[1], box1[0], box1[3], box1[2]
+        b2_x1, b2_y1, b2_x2, b2_y2 = box2[1], box2[0], box2[3], box2[2]
+    else:  # transform from xywh to xyxy
+        b1_x1, b1_x2 = box1[0] - box1[2] / 2, box1[0] + box1[2] / 2
+        b1_y1, b1_y2 = box1[1] - box1[3] / 2, box1[1] + box1[3] / 2
+        b2_x1, b2_x2 = box2[0] - box2[2] / 2, box2[0] + box2[2] / 2
+        b2_y1, b2_y2 = box2[1] - box2[3] / 2, box2[1] + box2[3] / 2
+
+    # Intersection area
+    inter = (torch.min(b1_x2, b2_x2) - torch.max(b1_x1, b2_x1)).clamp(0) * \
+            (torch.min(b1_y2, b2_y2) - torch.max(b1_y1, b2_y1)).clamp(0)
+
+    # Union Area
+    w1, h1 = b1_x2 - b1_x1, b1_y2 - b1_y1
+    w2, h2 = b2_x2 - b2_x1, b2_y2 - b2_y1
+    union = (w1 * h1 + 1e-16) + w2 * h2 - inter
+
+    iou = inter / union  # iou
+    if GIoU or DIoU or CIoU:
+        cw = torch.max(b1_x2, b2_x2) - torch.min(b1_x1, b2_x1)  # convex (smallest enclosing box) width
+        ch = torch.max(b1_y2, b2_y2) - torch.min(b1_y1, b2_y1)  # convex height
+        if GIoU:  # Generalized IoU https://arxiv.org/pdf/1902.09630.pdf
+            c_area = cw * ch + 1e-16  # convex area
+            return iou - (c_area - union) / c_area  # GIoU
+        if DIoU or CIoU:  # Distance or Complete IoU https://arxiv.org/abs/1911.08287v1
+            # convex diagonal squared
+            c2 = cw ** 2 + ch ** 2 + 1e-16
+            # centerpoint distance squared
+            rho2 = ((b2_x1 + b2_x2) - (b1_x1 + b1_x2)) ** 2 / 4 + ((b2_y1 + b2_y2) - (b1_y1 + b1_y2)) ** 2 / 4
+            if DIoU:
+                return iou - rho2 / c2  # DIoU
+            elif CIoU:  # https://github.com/Zzh-tju/DIoU-SSD-pytorch/blob/master/utils/box/box_utils.py#L47
+                v = (4 / math.pi ** 2) * torch.pow(torch.atan(w2 / h2) - torch.atan(w1 / h1), 2)
+                with torch.no_grad():
+                    alpha = v / (1 - iou + v)
+                return iou - (rho2 / c2 + v * alpha)  # CIoU
+
+    return iou
+
+
+def giou_loss(box_outputs,box_targets_at_level,num_positives):
+    #nb = box_outputs.shape[0]
+    #pxy = box_outputs[:, :2].sigmoid() * 2. - 0.5
+    #pwh = (box_outputs[:, 2:4].sigmoid() * 2) ** 2 
+    #pbox = torch.cat((pxy, pwh), 1).to('cuda')  # predicted box
+    giou = bbox_iou(box_outputs.reshape([-1,4]).t(), box_targets_at_level.view([-1,4]), x1y1x2y2=True, GIoU=True)
+    return (1.0 - giou).sum()
 
 
 def huber_loss(input, target, delta=1., weights=None, size_average=True):
@@ -163,6 +219,7 @@ class DetectionLoss(nn.Module):
 
         cls_losses = []
         box_losses = []
+        new_box_losses = []
         for l in range(levels):
             if stack_targets:
                 cls_targets_at_level = torch.stack([b[l] for b in cls_targets])
@@ -190,10 +247,16 @@ class DetectionLoss(nn.Module):
             cls_losses.append(cls_loss.sum())
 
             box_losses.append(_box_loss(
-                box_outputs[l].permute(0, 2, 3, 1),
+                box_outputs[l].permute(0, 2, 3, 1),# batchsize,w,h,number of boxes
                 box_targets_at_level,
                 num_positives_sum,
                 delta=self.delta))
+
+            #new_box_losses.append(giou_loss(
+            #    box_outputs[l].permute(0, 2, 3, 1),# batchsize,w,h,number of boxes
+            #    box_targets_at_level,
+            #    num_positives_sum
+            #    ))
 
         # Sum per level losses to total loss.
         cls_loss = torch.sum(torch.stack(cls_losses, dim=-1), dim=-1)

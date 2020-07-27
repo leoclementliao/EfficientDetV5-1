@@ -251,7 +251,7 @@ def train(hyp):
                                                 sampler=RandomSampler(train_dataset),
                                                 pin_memory=True,#opt.cache_images,
                                                 drop_last=True,
-                                                num_workers=3,
+                                                num_workers=4,
                                                 collate_fn=collate_fn,
                                             )
     #create_dataloader(train_path, imgsz, batch_size, gs, opt,
@@ -286,20 +286,18 @@ def train(hyp):
     print('Image sizes %g train, %g test' % (imgsz, imgsz_test))
     print('Using %g dataloader workers' % dataloader.num_workers)
     print('Starting training for %g epochs...' % epochs)
-    anchor = Anchor_config(config)
-    anchor.anchors.to(device)
-    anchor.anchor_labeler.to(device)
+    #anchor = Anchor_config(config)
+    #anchor.anchors.to(device)
+    #anchor.anchor_labeler.to(device)
     # torch.autograd.set_detect_anomaly(True)
     for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
         model.train()
 
         
 
-        # Update mosaic border
-        # b = int(random.uniform(0.25 * imgsz, 0.75 * imgsz + gs) // gs * gs)
-        # dataset.mosaic_border = [b - imgsz, -b]  # height, width borders
+
         
-        mloss = torch.zeros(3, device="cpu")  # mean losses
+        mloss = torch.zeros(3, device='cpu')  # mean losses
         print(('\n' + '%10s' * 7) % ('Epoch', 'gpu_mem', 'box', 'cls', 'total', 'targets', 'img_size'))
         #ss = ('\n' + '%5d' * 7)%(0,0,0,0,0,0,0)
         
@@ -307,12 +305,15 @@ def train(hyp):
         for i, (images, targets, image_ids) in pbar:  # batch -------------------------------------------------------------
             ni = i + nb * epoch  # number integrated batches (since train start)
             #imgs = imgs.to(device).float() / 255.0  # uint8 to float32, 0 - 255 to 0.0 - 1.0
+            if epoch == 115:
+                print("break")
             images = torch.stack(images)
-            images = images.to(device).float()
+            images = images.to(device)#.float()
             batch_size = images.shape[0]
             boxes = [target['boxes'].to(device).float() for target in targets]# yxyx?
             labels = [target['labels'].to(device).float() for target in targets]
             # Burn-in
+            
             if ni <= n_burn:
                 xi = [0, n_burn]  # x interp
                 # model.gr = np.interp(ni, xi, [0.0, 1.0])  # giou loss ratio (obj_loss = 1.0 or giou)
