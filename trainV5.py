@@ -1,6 +1,6 @@
 import os
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID" 
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 import argparse
 import random
@@ -81,12 +81,11 @@ def train(hyp):
         os.remove(f)
 
     # Create model
-    #model = Model(opt.cfg, nc=data_dict['nc']).to(device)
+    
     config = get_efficientdet_config('tf_efficientdet_d4')
     # 根据上面的配置生成网络
     load_from_pretrained = True
-    #config.num_classes = 1
-    #config.image_size = opt.img_size[0]
+    
     if(load_from_pretrained):
         model = EfficientDet(config, pretrained_backbone=False)
     # 加载预训练模型
@@ -97,6 +96,7 @@ def train(hyp):
                              if k in model.state_dict() and not any(x in k for x in exclude)
                              and model.state_dict()[k].shape == v.shape}
             model.load_state_dict(checkpoint, strict=False)
+            
             print('Transferred %g/%g items from ' % (len(checkpoint), len(model.state_dict())))
         except KeyError as e:
             s = " is not compatible with . This may be due to model differences or %s may be out of date. " \
@@ -106,6 +106,7 @@ def train(hyp):
         
         config.num_classes = 1
         config.image_size = opt.img_size[0]
+        model.class_net = HeadNet(config, num_outputs=config.num_classes, norm_kwargs=dict(eps=.001, momentum=.01))
     else: # load from best,last
         config.num_classes = 1
         config.image_size = opt.img_size[0]
@@ -114,8 +115,8 @@ def train(hyp):
         model.load_state_dict(checkpoint['model'].model.state_dict())
         print("load from last.pt\n")
         
-    # norm_kwargs 设置的是 BATCHNORM2D 的参数
-    model.class_net = HeadNet(config, num_outputs=config.num_classes, norm_kwargs=dict(eps=.001, momentum=.01))
+    
+    config.loss_type = opt.loss_type
     model = DetBenchTrain(model, config)
     print("effDet config:",config)
     
@@ -176,17 +177,7 @@ def train(hyp):
 
     # Initialize distributed training
     distribution = False
-    '''
-    if device.type != 'cpu' and torch.cuda.device_count() > 1 and torch.distributed.is_available():
-        #model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-        dist.init_process_group(backend='nccl',  # distributed backend
-                                init_method='tcp://127.0.0.1:9999',  # init method
-                                world_size=1,  # number of nodes
-                                rank=0)  # node rank
-        model = torch.nn.parallel.DistributedDataParallel(model,find_unused_parameters=True)
-        diftribution = True
-        # pip install torch==1.4.0+cu100 torchvision==0.5.0+cu100 -f https://download.pytorch.org/whl/torch_stable.html
-#'''
+    
     # Trainloader
     dataloader = torch.utils.data.DataLoader(
                                                 train_dataset,
@@ -194,13 +185,10 @@ def train(hyp):
                                                 sampler=RandomSampler(train_dataset),
                                                 pin_memory=True,#opt.cache_images,
                                                 drop_last=True,
-                                                num_workers=4,
+                                                num_workers=2,
                                                 collate_fn=collate_fn,
                                             )
-    #create_dataloader(train_path, imgsz, batch_size, gs, opt,
-                 #                           hyp=hyp, augment=True, cache=opt.cache_images, rect=opt.rect)
-    #mlc = np.concatenate(dataset.labels, 0)[:, 0].max()  # max label class
-    #assert mlc < nc, 'Label class %g exceeds nc=%g in %s. Correct your labels or your model.' % (mlc, nc, opt.cfg)
+    
 
     # Testloader
     testloader = torch.utils.data.DataLoader(
@@ -212,8 +200,7 @@ def train(hyp):
                                                 pin_memory=True,#opt.cache_images,
                                                 collate_fn=collate_fn,
                                             )
-    #create_dataloader(test_path, imgsz_test, batch_size, gs, opt,
-                  #                 hyp=hyp, augment=False, cache=opt.cache_images, rect=True)[0]
+    
     
 
     # Exponential moving average
@@ -321,7 +308,7 @@ def train(hyp):
         scheduler.step()
         
         # mAP
-        #ema.update_attr(model, include=['md', 'nc','gr', 'hyp', 'names', 'stride'])
+        
         final_epoch = epoch + 1 == epochs
         if not opt.notest or final_epoch:  # Calculate mAP
             result = validation(model=ema.ema,val_loader = testloader,config=config,device=device)
@@ -402,6 +389,7 @@ if __name__ == '__main__':
     #check_git_status()
     parser = argparse.ArgumentParser()
     parser.add_argument('--epochs', type=int, default=300)
+    parser.add_argument('--loss_type', type=str, default="GIOU")
     parser.add_argument('--batch-size', type=int, default=16)
     parser.add_argument('--cfg', type=str, default='models/yolov5s.yaml', help='*.cfg path')
     parser.add_argument('--data', type=str, default='data/coco128.yaml', help='*.data path')

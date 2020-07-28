@@ -65,19 +65,33 @@ def focal_loss(logits, targets, alpha, gamma, normalizer):
     return weighted_loss
 
 
-def bbox_iou(box1, box2, x1y1x2y2=True, GIoU=False, DIoU=False, CIoU=False):
+def bbox_iou(box1, box2, x1y1x2y2=False, mask= None, ltype = "GIOU"):
     # Returns the IoU of box1 to box2. box1 is 4, box2 is nx4
-    box2 = box2.t().half()
-
+    GIoU = False
+    CIoU = False
+    DIoU = False
+    if ltype == "GIOU":
+        GIoU = True
+    elif ltype == "CIOU":
+        CIoU = True
+    elif ltype == "DIOU":
+        DIoU = True
+    else:
+        assert(0)
+    
+    box2 = box2.t()
+    if mask != None:
+        box1 *= mask
+    box1 = box1.t().float()
     # Get the coordinates of bounding boxes
     if x1y1x2y2:  # x1, y1, x2, y2 = box1
         b1_x1, b1_y1, b1_x2, b1_y2 = box1[1], box1[0], box1[3], box1[2]
         b2_x1, b2_y1, b2_x2, b2_y2 = box2[1], box2[0], box2[3], box2[2]
-    else:  # transform from xywh to xyxy
-        b1_x1, b1_x2 = box1[0] - box1[2] / 2, box1[0] + box1[2] / 2
-        b1_y1, b1_y2 = box1[1] - box1[3] / 2, box1[1] + box1[3] / 2
-        b2_x1, b2_x2 = box2[0] - box2[2] / 2, box2[0] + box2[2] / 2
-        b2_y1, b2_y2 = box2[1] - box2[3] / 2, box2[1] + box2[3] / 2
+    else:  # transform from xywh to xyxy ty, tx, th, tw = rel_codes
+        b1_x1, b1_x2 = box1[1] - torch.exp(box1[3]) / 2, box1[1] + torch.exp(box1[3]) / 2
+        b1_y1, b1_y2 = box1[0] - torch.exp(box1[2]) / 2, box1[0] + torch.exp(box1[2]) / 2
+        b2_x1, b2_x2 = box2[1] - torch.exp(box2[3]) / 2, box2[1] + torch.exp(box2[3]) / 2
+        b2_y1, b2_y2 = box2[0] - torch.exp(box2[2]) / 2, box2[0] + torch.exp(box2[2]) / 2
 
     # Intersection area
     inter = (torch.min(b1_x2, b2_x2) - torch.max(b1_x1, b2_x1)).clamp(0) * \
@@ -86,12 +100,20 @@ def bbox_iou(box1, box2, x1y1x2y2=True, GIoU=False, DIoU=False, CIoU=False):
     # Union Area
     w1, h1 = b1_x2 - b1_x1, b1_y2 - b1_y1
     w2, h2 = b2_x2 - b2_x1, b2_y2 - b2_y1
-    union = (w1 * h1 + 1e-16) + w2 * h2 - inter
+    #w1 = w1.abs()#torch.clamp(w1,min = -0.1,max = 0.1)
+    #h1 = h1.abs()#torch.clamp(h1,min = -0.1,max = 0.1)
+    #w2 = w2.abs()#torch.clamp(w2,min = -0.1,max = 0.1)
+    #h2 = h2.abs()#torch.clamp(h2,min = -0.1,max = 0.1)
+    area1 = w1*h1
+    area2 = w2*h2
+    union = area1+area2+1e-16 - inter
 
     iou = inter / union  # iou
     if GIoU or DIoU or CIoU:
         cw = torch.max(b1_x2, b2_x2) - torch.min(b1_x1, b2_x1)  # convex (smallest enclosing box) width
+        
         ch = torch.max(b1_y2, b2_y2) - torch.min(b1_y1, b2_y1)  # convex height
+        
         if GIoU:  # Generalized IoU https://arxiv.org/pdf/1902.09630.pdf
             c_area = cw * ch + 1e-16  # convex area
             return iou - (c_area - union) / c_area  # GIoU
@@ -105,19 +127,23 @@ def bbox_iou(box1, box2, x1y1x2y2=True, GIoU=False, DIoU=False, CIoU=False):
             elif CIoU:  # https://github.com/Zzh-tju/DIoU-SSD-pytorch/blob/master/utils/box/box_utils.py#L47
                 v = (4 / math.pi ** 2) * torch.pow(torch.atan(w2 / h2) - torch.atan(w1 / h1), 2)
                 with torch.no_grad():
-                    alpha = v / (1 - iou + v)
+                    alpha = v / (1 - iou + v+1e-16)
                 return iou - (rho2 / c2 + v * alpha)  # CIoU
-
+    #if mask != None:
+     #   iou*= mask
     return iou
 
 
-def giou_loss(box_outputs,box_targets_at_level,num_positives):
+def giou_loss(box_outputs,box_targets_at_level,num_positives,loss_type):
     #nb = box_outputs.shape[0]
     #pxy = box_outputs[:, :2].sigmoid() * 2. - 0.5
     #pwh = (box_outputs[:, 2:4].sigmoid() * 2) ** 2 
     #pbox = torch.cat((pxy, pwh), 1).to('cuda')  # predicted box
-    giou = bbox_iou(box_outputs.reshape([-1,4]).t(), box_targets_at_level.view([-1,4]), x1y1x2y2=True, GIoU=True)
-    return (1.0 - giou).sum()
+    box_targets = box_targets_at_level.view([-1,4])
+    mask = box_targets != 0.0
+    giou = bbox_iou(box_outputs.reshape([-1,4]), box_targets, x1y1x2y2=False,mask = mask,ltype= loss_type)
+    
+    return (1.0 - giou).sum()/(num_positives*8.0)#/num_positives#.mean()
 
 
 def huber_loss(input, target, delta=1., weights=None, size_average=True):
@@ -216,7 +242,9 @@ class DetectionLoss(nn.Module):
         # num_positives_sum, which would lead to inf loss during training
         num_positives_sum = num_positives.sum() + 1.0
         levels = len(cls_outputs)
-
+        
+                
+        
         cls_losses = []
         box_losses = []
         new_box_losses = []
@@ -245,18 +273,20 @@ class DetectionLoss(nn.Module):
             cls_loss = cls_loss.view(bs, height, width, -1, self.num_classes)
             cls_loss *= (cls_targets_at_level != -2).unsqueeze(-1).float()
             cls_losses.append(cls_loss.sum())
-
-            box_losses.append(_box_loss(
-                box_outputs[l].permute(0, 2, 3, 1),# batchsize,w,h,number of boxes
-                box_targets_at_level,
-                num_positives_sum,
-                delta=self.delta))
-
-            #new_box_losses.append(giou_loss(
-            #    box_outputs[l].permute(0, 2, 3, 1),# batchsize,w,h,number of boxes
-            #    box_targets_at_level,
-            #    num_positives_sum
-            #    ))
+            
+            if self.config.loss_type == "HUBER":
+                box_losses.append(_box_loss(
+                    box_outputs[l].permute(0, 2, 3, 1),# batchsize,w,h,number of boxes
+                    box_targets_at_level,
+                    num_positives_sum,
+                    delta=self.delta))
+            else:
+                box_losses.append(giou_loss(
+                    box_outputs[l].permute(0, 2, 3, 1),# batchsize,w,h,number of boxes
+                    box_targets_at_level,
+                    num_positives_sum,
+                    loss_type = self.config.loss_type
+                    ))
 
         # Sum per level losses to total loss.
         cls_loss = torch.sum(torch.stack(cls_losses, dim=-1), dim=-1)

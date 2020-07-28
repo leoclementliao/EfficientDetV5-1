@@ -75,6 +75,7 @@ def default_detection_configs():
     h.gamma = 1.5
 
     # localization loss
+    h.loss_type = 'HUBER'
     h.delta = 0.1
     h.box_loss_weight = 50.0
 
