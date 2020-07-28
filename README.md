@@ -8,10 +8,13 @@ add:
 5) progress bar when training.
 6) saving model using half precision, lower model size
 7) Exponential moving average weight support
+8) GIOU /DIOU/CIOU loss
+
 
 to add:
-1) anchor ration to change to yolo style
-2) add MAP calculation for validation set
-3) loss change to yolo style
-4) GIOU loss
+
+1) add MAP calculation for validation set
+2) anchor ration to change to like yolo 
+
+
 
