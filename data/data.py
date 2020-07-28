@@ -81,7 +81,7 @@ def get_train_transforms():
             A.VerticalFlip(p=0.5),
             #A.Resize(height=512, width=512, p=1),
             A.Cutout(num_holes=8, max_h_size=32, max_w_size=32, fill_value=0, p=0.8),
-            ToTensorV2(p=1.0),
+            #ToTensorV2(p=1.0),
         ],
         p=1.0,
         bbox_params=A.BboxParams(
@@ -98,7 +98,7 @@ def get_valid_transforms():
     return A.Compose(
         [
             A.Resize(height=512, width=512, p=1.0),
-            ToTensorV2(p=1.0),
+            #ToTensorV2(p=1.0),
         ],
         p=1.0,
         bbox_params=A.BboxParams(
@@ -157,7 +157,7 @@ class DatasetRetriever(Dataset):
         
         # 多做几次图像增强，防止有图像增强失败，如果成功，则直接返回。
         if self.transforms:
-            for i in range(1000):
+            for i in range(10):
                 sample = self.transforms(**{
                     'image': image,
                     'bboxes': target['boxes'],
@@ -168,7 +168,7 @@ class DatasetRetriever(Dataset):
                     target['boxes'] = torch.stack(tuple(map(torch.tensor, zip(*sample['bboxes'])))).permute(1, 0)
                     target['boxes'][:, [0, 1, 2, 3]] = target['boxes'][:, [1, 0, 3, 2]]  # yxyx: be warning
                     break
-            if i >999:
+            if i >9:
                 print("!!!!!!!!!!panic!!!!!!A crashes")
                 sample = self.back_up_trans(**{
                     'image': image,
@@ -180,6 +180,10 @@ class DatasetRetriever(Dataset):
                     target['boxes'] = torch.stack(tuple(map(torch.tensor, zip(*sample['bboxes'])))).permute(1, 0)
                     target['boxes'][:, [0, 1, 2, 3]] = target['boxes'][:, [1, 0, 3, 2]]  # yxyx: be warning
 
+        #print(image.shape)
+        image = np.ascontiguousarray(image)
+        image = torch.from_numpy(image.transpose(2, 0, 1))
+        
         return image, target, image_id
 
     def __len__(self) -> int:
@@ -339,6 +343,16 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
     if isinstance(images, torch.Tensor):
         
         images = images.cpu().float().numpy()
+    else:
+        images = []
+        for img in images:
+            try:
+                img = img.cpu().float().numpy
+            except:
+                pass
+            images.append(img)
+        images = np.stack(images)
+        print('something wrong')
         #images = np.vsplit(images, images.shape[0])
     
     if isinstance(targets[0], torch.Tensor):
