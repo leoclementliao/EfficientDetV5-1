@@ -143,7 +143,7 @@ def giou_loss(box_outputs,box_targets_at_level,num_positives,loss_type):
     mask = box_targets != 0.0
     giou = bbox_iou(box_outputs.reshape([-1,4]), box_targets, x1y1x2y2=False,mask = mask,ltype= loss_type)
     
-    return (1.0 - giou).sum()/(num_positives*8.0)#/num_positives#.mean()
+    return (1.0 - giou).sum()/(num_positives*20.0)#/num_positives#.mean()
 
 
 def huber_loss(input, target, delta=1., weights=None, size_average=True):
